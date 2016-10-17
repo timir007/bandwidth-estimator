@@ -169,13 +169,15 @@ uint64_t generate_udp_traffic(struct thread_info *thread_info){
 
 
         	tot_bytes += sendmsg(thread_info->udp_sock_fd, &msg, 0);
-
+		sent_packet++;
         	
     	}
         gettimeofday(&t1_p, NULL);
         time_left=((t1_p.tv_sec - t0_p.tv_sec) * 1000 + (double)(t1_p.tv_usec - t0_p.tv_usec) / 1000);
-	if (time_left<500)
+	if (time_left<500){
 		usleep((500-time_left)*1000);
+        sent_burst++;
+	}
 	
     }
 
