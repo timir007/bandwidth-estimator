@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/times.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -41,10 +42,9 @@ typedef enum{
 struct thread_info{
     thread_status status;
     int32_t udp_sock_fd;
-    int32_t tcp_sock_fd;
     struct sockaddr_storage source;
-    uint16_t bandwidth;
-    uint16_t duration;
+    uint16_t num_packets;
+    uint16_t num_bursts;
     uint16_t payload_len;
     //I am a bit lazy, so just store it instead of multiple lookups
     uint16_t remote_port;
@@ -116,63 +116,7 @@ int bind_local(char *local_addr, char *local_port, int socktype, uint8_t
     return sockfd;
 }
 
-uint64_t generate_tcp_traffic(struct thread_info *thread_info){
-    struct msghdr msg;
-    struct iovec iov;
-    uint8_t buf[MAX_PAYLOAD_LEN] = {0};
-    int32_t numbytes = 0;
-    uint64_t tot_bytes = 0;
-	struct new_session_pkt *pkt = (struct new_session_pkt*) buf;
-	struct timespec sleep_time;
-	uint8_t shall_sleep = 0;
-    uint16_t *remote_port_payload = NULL;
 
-    memset(&msg, 0, sizeof(struct msghdr));
-    memset(&iov, 0, sizeof(struct iovec));
-
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    iov.iov_base = buf;
-    iov.iov_len = MAX_PAYLOAD_LEN;
-
-	//Before sending, wait for session info packet
-	while (tot_bytes < sizeof(struct new_session_pkt)) {
-		numbytes = recvmsg(thread_info->tcp_sock_fd, &msg, 0);
-
-		if (numbytes <= 0) {
-			fprintf(stderr, "TCP socket failed, aborting\n");
-			return 0;
-		}
-
-		tot_bytes += numbytes;
-	}
-
-	fprintf(stdout, "IAT: %ums\n", pkt->iat);
-
-	if (pkt->iat) {
-		sleep_time.tv_sec = pkt->iat / 1e3;
-		sleep_time.tv_nsec = (pkt->iat - (sleep_time.tv_sec * 1000)) * 1e6;
-		shall_sleep = 1;
-	}
-
-	memset(buf, DATA, sizeof(buf));
-	iov.iov_len = MAX_PAYLOAD_LEN;
-	tot_bytes = 0;
-
-    remote_port_payload = (uint16_t*) buf;
-    *remote_port_payload = thread_info->remote_port;
-
-    //With TCP, it is is sufficient to send data until the socket returns an
-    //error (closed by peer)
-    while((numbytes = sendmsg(thread_info->tcp_sock_fd, &msg, MSG_NOSIGNAL)) > 0) {
-            tot_bytes += numbytes;
-
-			if (shall_sleep)
-				nanosleep(&sleep_time, NULL);
-	}
-
-    return tot_bytes;
-}
 
 uint64_t generate_udp_traffic(struct thread_info *thread_info){
     //Variables used to compute and keep the desired bandwidth
@@ -199,53 +143,40 @@ uint64_t generate_udp_traffic(struct thread_info *thread_info){
     iov.iov_base = buf;
     iov.iov_len = thread_info->payload_len;
 
-    pkts_per_sec = (thread_info->bandwidth * 1000 * 1000) / 
+   /* pkts_per_sec = (thread_info->bandwidth * 1000 * 1000) / 
         (double) (thread_info->payload_len * 8);
     desired_iat = 1000000 / pkts_per_sec; //IAT is microseconds, ok resolution
     fprintf(stdout, "Bandiwdth of %d Mbit/s, duration %ds, payload length %d "
             "byte\n", thread_info->bandwidth, thread_info->duration, 
-            thread_info->payload_len);
-    fprintf(stdout, "Sending %f packets/s, IAT %f microseconds\n", 
-            pkts_per_sec, desired_iat);
+            thread_info->payload_len);*/
+    fprintf(stdout, "Sending %d packets/s\n", 
+            thread_info->num_packets);
 
-    t0 = time(NULL);
-    gettimeofday(&t0_p, NULL);
+  
+    
     
     //Remember to reset values
     buf[0] = DATA;
     iat = 0;
     tot_bytes = 0;
+    int sent_packet=0;
+    int sent_burst=0;
+    double time_left;
+   
+    while(sent_burst<thread_info->num_bursts){
+        gettimeofday(&t0_p, NULL); 
+    	while(sent_packet<thread_info->num_packets){
 
-    while(1){
-        gettimeofday(&t1_p, NULL);  
-        //See notebook for order, goal is that difference should be 0. I want 
-        //to find how much more/less I should sleep this time to provide the 
-        //desired IAT. That adjustment is desired_iat + the time it took for the
-        //last packet to be processed.
-        //- If it it took longer than the desired IAT, the adjustment will be 
-        //negative and "this" packet have to sleep less
-        //- If it took a shorter time than desiread IAT, this packet will have 
-        //to be delayed a little bit
-        adjust = desired_iat + (((t0_p.tv_sec - t1_p.tv_sec) * 1000000) + 
-                (t0_p.tv_usec - t1_p.tv_usec));
-        t0_p.tv_sec = t1_p.tv_sec;
-        t0_p.tv_usec = t1_p.tv_usec;
 
-        if(adjust > 0 || iat > 0)
-          iat += adjust;
+        	tot_bytes += sendmsg(thread_info->udp_sock_fd, &msg, 0);
 
-        tot_bytes += sendmsg(thread_info->udp_sock_fd, &msg, 0);
-
-        //Check if it is time to abort
-        t1 = time(NULL);
-
-        //Must "include" previous second
-        if(difftime(t1,t0) > thread_info->duration){
-            break;
-        }
-
-        if(iat > 0)
-            usleep(iat);
+        	
+    	}
+        gettimeofday(&t1_p, NULL);
+        time_left=((t1_p.tv_sec - t0_p.tv_sec) * 1000 + (double)(t1_p.tv_usec - t0_p.tv_usec) / 1000);
+	if (time_left<500)
+		usleep((500-time_left)*1000);
+	
     }
 
     //Easy solution for sending end_session
@@ -271,13 +202,7 @@ void *send_loop(void *data){
         //Sanity
         assert(thread_info->status == RUNNING);
 
-        if(thread_info->tcp_sock_fd > 0){
-            tot_bytes = generate_tcp_traffic(thread_info);
-            close(thread_info->tcp_sock_fd);
-            thread_info->tcp_sock_fd = 0; 
-        } else {
-            tot_bytes = generate_udp_traffic(thread_info); 
-        }
+        tot_bytes = generate_udp_traffic(thread_info); 
 
        
         fprintf(stdout, "Done with sending. Sent %lu bytes\n", tot_bytes);
@@ -404,14 +329,11 @@ void network_event_loop(int32_t udp_sock_fd){
             for(i=0; i<NUM_THREADS; i++){
                 //Found an availale thread. Initialise and start
                 if(thread_infos[i]->status == PAUSED){
-                    if(recv_socket > 0){
-                        thread_infos[i]->tcp_sock_fd = recv_socket;
-                    } else{
-                        new_s_pkt = (struct new_session_pkt *) buf;
-                        thread_infos[i]->duration = new_s_pkt->duration;
-                        thread_infos[i]->bandwidth = new_s_pkt->bw;
-                        thread_infos[i]->payload_len = new_s_pkt->payload_len;
-                    }
+                   new_s_pkt = (struct new_session_pkt *) buf;
+                   thread_infos[i]->num_packets = new_s_pkt->num_packets;
+                   thread_infos[i]->num_bursts = new_s_pkt->num_bursts;
+                   thread_infos[i]->payload_len = new_s_pkt->payload_len;
+                    
 
                     memcpy(&thread_infos[i]->source, &sender_addr, 
                             sizeof(struct sockaddr_storage));
