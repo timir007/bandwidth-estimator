@@ -76,6 +76,8 @@ void network_loop_udp(int32_t udp_sock_fd, int16_t num_packets, int16_t num_burs
     struct timespec t0, t1;
     double data_interval;
     double estimated_bandwidth;
+    int32_t rcvd_packets=0;	
+    uint8_t new_session=0;
 
     struct msghdr msg;
     struct iovec iov;
@@ -122,6 +124,7 @@ void network_loop_udp(int32_t udp_sock_fd, int16_t num_packets, int16_t num_burs
     }
 
     while(1){
+       
         recv_set_copy = recv_set;
         if(state == STARTING){
             tv.tv_sec = NEW_SESSION_TIMEOUT;
@@ -164,6 +167,25 @@ void network_loop_udp(int32_t udp_sock_fd, int16_t num_packets, int16_t num_burs
                         fprintf(output_file, "%.9f %zd\n", 
                                 recv_time->tv_sec + 
                                 recv_time->tv_nsec/1000000000.0, numbytes);
+		    rcvd_packets++;
+		    if(new_session==1){
+			memcpy(&t0, recv_time, sizeof(struct timespec));
+			new_session=0;
+		    }
+			
+		    if(rcvd_packets==num_packets){
+			rcvd_packets=0;
+			    data_interval = (t1.tv_sec - t0.tv_sec) + 
+       				((t1.tv_nsec - t0.tv_nsec)/1000000000.0);
+        		    estimated_bandwidth = 
+            			((total_number_bytes / 1000000.0) * 8) / data_interval;
+        		    //Computations?
+        		    fprintf(stderr, "Received %zd bytes in %.8f seconds. Estimated " 
+                		"bandwidth %.2f Mbit/s\n", total_number_bytes, data_interval, 
+                		estimated_bandwidth);
+			    new_session=1;
+			    total_number_bytes=0;
+		     }
                 }
 
                 if(state == STARTING){
@@ -192,7 +214,7 @@ void network_loop_udp(int32_t udp_sock_fd, int16_t num_packets, int16_t num_burs
         estimated_bandwidth = 
             ((total_number_bytes / 1000000.0) * 8) / data_interval;
         //Computations?
-        fprintf(stderr, "Received %zd bytes in %.2f seconds. Estimated " 
+        fprintf(stderr, "Received %zd bytes in %.8f seconds. Estimated " 
                 "bandwidth %.2f Mbit/s\n", total_number_bytes, data_interval, 
                 estimated_bandwidth);
     }

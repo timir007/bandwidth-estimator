@@ -165,6 +165,7 @@ uint64_t generate_udp_traffic(struct thread_info *thread_info){
    
     while(sent_burst<thread_info->num_bursts){
         gettimeofday(&t0_p, NULL); 
+	sent_packet=0;
     	while(sent_packet<thread_info->num_packets){
 
 
@@ -174,12 +175,14 @@ uint64_t generate_udp_traffic(struct thread_info *thread_info){
     	}
         gettimeofday(&t1_p, NULL);
         time_left=((t1_p.tv_sec - t0_p.tv_sec) * 1000 + (double)(t1_p.tv_usec - t0_p.tv_usec) / 1000);
-	if (time_left<500){
-		usleep((500-time_left)*1000);
-        sent_burst++;
-	}
+	if (time_left<1000){
+		usleep((1000-time_left)*1000);
+        }
+	sent_burst++;
 	
     }
+
+    printf("%d-- %d",sent_burst,thread_info->num_bursts);
 
     //Easy solution for sending end_session
     buf[0] = END_SESSION;
